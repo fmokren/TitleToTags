@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Pester tests
+        env:
+          PSModulePath: ${{ github.workspace }}:${{ env.PSModulePath }}
+        run: |
+          # Install Pester (non-interactive) and run the tests
+          pwsh -NoProfile -Command "Install-Module -Name Pester -Force -Scope CurrentUser -AllowClobber; Invoke-Pester -Script ./tests/TitleToTags.Tests.ps1 -Output Detailed"
+        shell: bash
