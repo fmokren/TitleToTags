@@ -142,7 +142,7 @@ foreach ($it in $items) {
     $existingTags = $it.fields.'System.Tags'
 
     Write-Output "Processing #$($id): $($title)"
-    $processed = Process-TitleToTags -title $title
+    $processed = Convert-TitleToTags -title $title
 
     # Determine whether tags or title changed. Even if no tags were extracted, we may
     # need to update the title (for example to remove empty brackets like '[]' or '[ ]').

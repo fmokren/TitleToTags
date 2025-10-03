@@ -149,7 +149,15 @@ function Convert-TitleToTags {
         $newTitle = "Untitled Work Item"
     }
 
-    return [pscustomobject]@{ Title = $newTitle; Tags = $tokens }
+    # Normalize tokens into a simple string array (trimmed, non-empty)
+    $tagsArray = @()
+    if ($tokens -and $tokens.Count -gt 0) {
+        $tagsArray = $tokens | ForEach-Object { $_.ToString().Trim() } | Where-Object { $_ -ne '' }
+        # ensure a real array (not ArrayList) so callers can rely on @() wrapping behavior
+        $tagsArray = @($tagsArray)
+    }
+
+    return [pscustomobject]@{ Title = $newTitle; Tags = $tagsArray }
 }
 
 function Update-WorkItem {
@@ -184,17 +192,4 @@ function Update-WorkItem {
     return $resp
 }
 
-function Process-TitleToTags {
-    param(
-        [Parameter(Mandatory=$true)][string]$Title
-    )
-
-    # Reuse Convert-TitleToTags for parsing; normalize output to ensure Tags is an array
-    $res = Convert-TitleToTags -title $Title
-    if ($null -eq $res) { return [pscustomobject]@{ Title = $Title; Tags = @() } }
-    if (-not $res.PSObject.Properties.Match('Tags').Count) { $res | Add-Member -NotePropertyName Tags -NotePropertyValue @() }
-    if ($res.Tags -eq $null) { $res.Tags = @() }
-    return $res
-}
-
-Export-ModuleMember -Function Get-AuthHeader,Invoke-WiqlQuery,Get-WorkItemsByIds,Convert-TitleToTags,Process-TitleToTags,Update-WorkItem,Get-WiqlFromSavedQuery
+Export-ModuleMember -Function Get-AuthHeader,Invoke-WiqlQuery,Get-WorkItemsByIds,Convert-TitleToTags,Update-WorkItem,Get-WiqlFromSavedQuery

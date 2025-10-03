@@ -1,6 +1,6 @@
 Import-Module Pester
 
-Describe 'Process-TitleToTags' {
+Describe 'Convert-TitleToTags' {
     It 'extracts tags and returns cleaned title' {
     Import-Module -Name (Join-Path $PSScriptRoot '..' 'TitleToTags.psm1') -Force
         $title = "Fix crash when loading [UI] [critical] - causes OOM"
