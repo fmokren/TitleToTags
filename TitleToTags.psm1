@@ -92,17 +92,56 @@ function Convert-TitleToTags {
         [string]$title
     )
 
-    # Match bracketed tokens like [foo], [a b], [#123]
-    $pattern = '\[([^\]]+)\]'
-    $regexMatches = [regex]::Matches($title, $pattern)
-    $tags = @()
-    foreach ($m in $regexMatches) { $tags += $m.Groups[1].Value }
+    # Bracket-aware parser that supports nested bracket groups. It extracts tokens
+    # from bracket pairs and removes bracketed substrings from the title. Tokens
+    # are returned in the order they appear (outer before inner).
+    $tokens = New-Object System.Collections.ArrayList
+    $outChars = New-Object System.Text.StringBuilder
+    $stack = New-Object System.Collections.Stack
 
-    # Remove the bracketed substrings from the title
-    $newTitle = [regex]::Replace($title, $pattern, '')
-    # Collapse multiple spaces and trim
-    $newTitle = ($newTitle -replace '\s{2,}', ' ').Trim().TrimStart(':').Trim()
+    foreach ($ch in $title.ToCharArray()) {
+        switch ($ch) {
+            '[' {
+                # start a new buffer for content inside brackets
+                $stack.Push('')
+            }
+            ']' {
+                if ($stack.Count -gt 0) {
+                    $buf = $stack.Pop()
+                    $buf = $buf.Trim()
+                    if ($buf.Length -gt 0) { [void]$tokens.Add($buf) }
+                }
+                else {
+                    # stray closing bracket -> treat literally
+                    [void]$outChars.Append($ch)
+                }
+            }
+            default {
+                if ($stack.Count -gt 0) {
+                    # append to top buffer
+                    $top = $stack.Pop()
+                    $top += $ch
+                    $stack.Push($top)
+                }
+                else {
+                    [void]$outChars.Append($ch)
+                }
+            }
+        }
+    }
 
+    # If there are unclosed bracket buffers, treat them as literal text (prepend '[')
+    while ($stack.Count -gt 0) {
+        $buf = $stack.Pop()
+        if ($buf -ne $null) { [void]$outChars.Append('[' + $buf) }
+    }
+
+    # Tokens were collected in the order of closing (inner-first). Reverse to prefer
+    # outer-to-inner order which is more natural for tags.
+    if ($tokens.Count -gt 1) { [array]::Reverse($tokens) }
+
+    # Normalize title by collapsing spaces and trimming
+    $newTitle = ($outChars.ToString() -replace '\s{2,}', ' ').Trim().TrimStart(':').Trim()
     if ($newTitle.Length -gt 0) {
         $newTitle = $newTitle.Substring(0,1).ToUpper() + $newTitle.Substring(1)
     }
@@ -110,7 +149,7 @@ function Convert-TitleToTags {
         $newTitle = "Untitled Work Item"
     }
 
-    return [pscustomobject]@{ Title = $newTitle; Tags = $tags }
+    return [pscustomobject]@{ Title = $newTitle; Tags = $tokens }
 }
 
 function Update-WorkItem {

@@ -34,56 +34,25 @@ $headers = Get-AuthHeader -pat $pat
 $outDir = Split-Path -Path $OutputFile -Parent
 if (-not (Test-Path $outDir)) { New-Item -ItemType Directory -Path $outDir -Force | Out-Null }
 
+# Shared token used to tag created work items so tests can find them
 $token = "TitleToTagsTest"
 if (-not $SavedQueryName) { $SavedQueryName = "TitleToTags Test Data $($token)" }
 
 
-# Create a collection of title patterns to exercise different bracket scenarios.  Each entry
-# corresponds to a distinct test case.  The ordering here intentionally covers:
-#   1) No bracketed substrings
-#   2) A single bracketed substring at the start
-#   3) A single bracketed substring at the end
-#   4) Two bracketed substrings within the title
-#   5) Title composed exclusively of bracketed substrings
-#   6) Mixed content with brackets at start and elsewhere
-#   7) Adjacent bracketed substrings without separators
-$titlePatterns = @(
-    # 0. No bracketed substrings at all
-    'No bracketed substrings in this title',
-    # 1. Single bracketed substring at the start
-    '[Single] bracketed substring at start of title',
-    # 2. Single bracketed substring at the end
-    'Title with bracketed substring at end [End]',
-    # 3. Two bracketed substrings separated by text
-    'Title with two bracketed substrings [One] [Two] at end',
-    # 4. Only bracketed substrings; no other words
-    '[All][Brackets][Only]',
-    # 5. Bracket at the start and another later in the title
-    '[First] Title begins with bracketed substring and also has [Second]',
-    # 6. Two adjacent bracketed substrings at the start with no separator
-    '[First][Second]Title begins with adjacent bracketed substrings'
-    # 7. Title with a single bracketed substring at the beginning but the following text is lowercase
-    '[start] title begins with lowercase text'
-    # 8. Title with nested brackets (should be treated as literal)
-    '[Outer [Inner]] Title with nested brackets'
-    # 9. Title with empty brackets (should be ignored)
-    'Title with empty brackets [] should ignore them'
-    # 10. Title with brackets but no content (should be ignored)
-    'Title with empty brackets [ ] should ignore them'
-    # 11. Title with multiple spaces between words and brackets
-    'Title   with    multiple   spaces  [Tag]  should   normalize'
-)
+# Load shared title patterns (function Get-TestDataPatterns)
+. (Join-Path -Path $PSScriptRoot -ChildPath 'testdata_patterns.ps1')
+$titlePatterns = Get-TestDataPatterns
 
-$created = @()
+
+# Track created items along with the pattern used so verification can assert per-item expectations
+$createdItems = @()
 for ($i = 1; $i -le $titlePatterns.Count; $i++) {
     # Pick a pattern for this iteration.  Cycle through the patterns if more items are requested
     $patternIndex = ($i - 1) % $titlePatterns.Count
-    $pattern = $titlePatterns[$patternIndex]
-    # Compose the full title.  Prefix with the token to allow easy selection and append a case number
-    $title = $pattern
+    $title = $titlePatterns[$patternIndex].Title
+   
     # Build the work item create URI using an encoded work item type (avoid embedding raw control characters)
     $type = '$Bug'
-    $encodedType = [uri]::EscapeDataString($type)
     $uri = "${OrganizationUrl}/${Project}/_apis/wit/workitems/${type}?api-version=7.1-preview.3"
 
     $ops = @()
@@ -111,8 +80,16 @@ for ($i = 1; $i -le $titlePatterns.Count; $i++) {
             try {
                 $respObj = $content | ConvertFrom-Json -ErrorAction Stop
                 if ($null -ne $respObj.id) {
-                    $created += $respObj.id
-                    Write-Output "  Created ID: $($respObj.id)"
+                    # Capture created id and associate with the pattern used
+                    $entry = [PSCustomObject]@{
+                        Id = $respObj.id
+                        PatternIndex = $patternIndex
+                        PatternTitle = $titlePatterns[$patternIndex].Title
+                        ExpectedTags = $titlePatterns[$patternIndex].ExpectedTags
+                        ExpectedTitle = $titlePatterns[$patternIndex].ExpectedTitle
+                    }
+                    $createdItems += $entry
+                    Write-Output "  Created ID: $($respObj.id) (pattern #$patternIndex)"
                     Write-Verbose "Full response: $($respObj | ConvertTo-Json -Depth 6)"
                 }
                 else {
@@ -154,40 +131,135 @@ for ($i = 1; $i -le $titlePatterns.Count; $i++) {
     }
 }
 
-if ($created.Count -eq 0) { Write-Warning 'No work items created; aborting saved query creation.'; exit 0 }
+if ($createdItems.Count -eq 0) { Write-Warning 'No work items created; aborting saved query creation.'; exit 0 }
 
 # Build WIQL to find these created items
-$wiql = "Select [System.Id] From WorkItems Where [System.TeamProject] = '$Project' And [System.WorkItemType] = 'Bug' And [System.Title] Contains '$token'"
+$wiql = "Select [System.Id] From WorkItems Where [System.TeamProject] = '$Project' And [System.WorkItemType] = 'Bug' And [System.Tags] Contains '$token'"
 
-# Create saved query
+# Create saved query (include explicit columns so the query displays the fields we want)
 $queryUri = "${OrganizationUrl}/${Project}/_apis/wit/queries/My%20Queries?api-version=7.1-preview.2"
-$qBody = @{ name = $SavedQueryName; wiql = $wiql; isPublic = $true } | ConvertTo-Json
+
+# Columns to display in the saved query
+$columns = @(
+    @{ referenceName = 'System.Id' },
+    @{ referenceName = 'System.Title' },
+    @{ referenceName = 'System.Tags' }
+)
+
+$qBody = @{ name = $SavedQueryName; wiql = $wiql; isPublic = $true; columns = $columns } | ConvertTo-Json -Depth 4
+# Initialize queryId so we always have a defined value even if create/update fails
+$queryId = $null
 Write-Output "Creating saved query: $SavedQueryName"
 if ($WhatIf) { Write-Output "WhatIf: POST $queryUri with $qBody" }
 else {
     try {
-        $qresp = Invoke-RestMethod -Method Post -Uri $queryUri -Headers $headers -Body $qBody -ContentType 'application/json' -ErrorAction Stop
-        $queryId = $qresp.id
-        Write-Output "  Saved query id: $queryId"
-    }
-    catch {
-        Write-Warning "Failed to create saved query: $($_.Exception.Message)"
-        if ($_.Exception.Response) {
+        # Use Invoke-WebRequest so we can always access raw response content on failure
+        $webResp = Invoke-WebRequest -Method Post -Uri $queryUri -Headers $headers -Body $qBody -ContentType 'application/json' -ErrorAction Stop
+        $respContent = $webResp.Content
+        if ($webResp.StatusCode -ge 200 -and $webResp.StatusCode -lt 300) {
             try {
-                $stream = $_.Exception.Response.GetResponseStream()
-                $reader = New-Object System.IO.StreamReader($stream)
-                $respBody = $reader.ReadToEnd()
-                Write-Warning "Response body: $respBody"
+                $qresp = $respContent | ConvertFrom-Json -ErrorAction Stop
+                if ($null -ne $qresp.id) {
+                    $queryId = $qresp.id
+                    Write-Output "  Saved query id: $queryId"
+                }
+                else {
+                    Write-Warning "Saved query response JSON did not include 'id'. Response: $respContent"
+                    $queryId = $null
+                }
             }
             catch {
-                Write-Warning "Failed to read response body: $_"
+                Write-Warning "Saved query created but response was not valid JSON: $($_.Exception.Message)"
+                Write-Output "Response content:\n$respContent"
+                $queryId = $null
             }
         }
-        $queryId = $null
+        else {
+            Write-Warning "Saved query POST returned status $($webResp.StatusCode): $($webResp.StatusDescription)"
+            Write-Output "Response content:\n$respContent"
+            $queryId = $null
+        }
+    }
+    catch {
+        $errMsg = $_.Exception.Message
+        Write-Warning "Failed to create saved query: $errMsg"
+        # Try to read the response body if available
+        if ($_.Exception.Response) {
+            try {
+                $resp = $_.Exception.Response
+                if ($resp -and $resp.Content) {
+                    $body = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+                    Write-Warning "Response body: $body"
+                }
+            }
+            catch {
+                Write-Warning "Failed to read exception response body: $_"
+            }
+        }
+
+        # If the error indicates a duplicate name, attempt to find the existing query and update it
+        if ($errMsg -match 'TF237018' -or $errMsg -match 'same name') {
+            Write-Output "Detected duplicate-name error; attempting to find existing saved query named '$SavedQueryName' and update it."
+            try {
+                $listUri = "${OrganizationUrl}/${Project}/_apis/wit/queries?`$depth=2&api-version=7.1-preview.2"
+                $listResp = Invoke-RestMethod -Method Get -Uri $listUri -Headers $headers -ErrorAction Stop
+
+                # Recursive search for node by name
+                function Find-QueryNode($node, $name) {
+                    if ($null -eq $node) { return $null }
+                    if ($node -is [System.Collections.IEnumerable]) {
+                        foreach ($n in $node) {
+                            $found = Find-QueryNode $n $name
+                            if ($found) { return $found }
+                        }
+                        return $null
+                    }
+                    else {
+                        if ($node.name -and $node.name -eq $name) { return $node }
+                        if ($node.children) { return Find-QueryNode $node.children $name }
+                        return $null
+                    }
+                }
+
+                $existing = Find-QueryNode $listResp $SavedQueryName
+                if ($existing -and $existing.id) {
+                    $existingId = $existing.id
+                    Write-Output "Found existing query id: $existingId. Attempting to update its WIQL and columns."
+
+                    $updateUri = "${OrganizationUrl}/${Project}/_apis/wit/queries/$existingId?api-version=7.1-preview.2"
+                    $uBody = @{ id = $existingId; name = $SavedQueryName; wiql = $wiql; isPublic = $true; columns = $columns } | ConvertTo-Json -Depth 6
+                    try {
+                        $updateResp = Invoke-RestMethod -Method Patch -Uri $updateUri -Headers $headers -Body $uBody -ContentType 'application/json' -ErrorAction Stop
+                        if ($null -ne $updateResp.id) {
+                            $queryId = $updateResp.id
+                            Write-Output "  Updated saved query id: $queryId"
+                        }
+                        else {
+                            Write-Warning "Update returned but no id found in response. Response: $($updateResp | ConvertTo-Json -Depth 6)"
+                        }
+                    }
+                    catch {
+                        Write-Warning "Failed to update existing saved query: $($_.Exception.Message)"
+                        if ($_.Exception.Response) {
+                            try { $body = $_.Exception.Response.Content.ReadAsStringAsync().GetAwaiter().GetResult(); Write-Warning "Response body: $body" } catch { }
+                        }
+                    }
+                }
+                else {
+                    Write-Warning "Could not locate existing saved query named '$SavedQueryName' to update."
+                }
+            }
+            catch {
+                Write-Warning "Failed to list or search saved queries: $($_.Exception.Message)"
+            }
+        }
+
+        $queryId = $queryId
     }
 }
 
 # Save metadata for cleanup
-$meta = @{ Token = $token; SavedQueryId = $queryId; SavedQueryName = $SavedQueryName }
-$meta | ConvertTo-Json | Out-File -FilePath $OutputFile -Encoding utf8
+# Save metadata for cleanup and verification; include per-item mapping
+$meta = @{ Token = $token; SavedQueryId = $queryId; SavedQueryName = $SavedQueryName; Items = $createdItems }
+$meta | ConvertTo-Json -Depth 6 | Out-File -FilePath $OutputFile -Encoding utf8
 Write-Output "Wrote metadata to $OutputFile"

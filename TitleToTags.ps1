@@ -70,27 +70,42 @@ foreach ($it in $items) {
     Write-Output "Processing #$($id): $($title)"
     $processed = Process-TitleToTags -title $title
 
-    if ($processed.Tags.Count -eq 0) {
-        Write-Verbose "No bracketed tokens found for $id. Skipping."
-        continue
-    }
+  # Determine whether tags or title changed. Even if no tags were extracted, we may
+  # need to update the title (for example to remove empty brackets like '[]' or '[ ]').
+  $titleChanged = ($processed.Title -ne $title)
 
-    # Build new tags list
-    $existing = @()
-    if ($existingTags) {
+  # Build new tags list. Normalize processed.Tags to an array so property access is safe
+  $tagsString = $null
+  $toAdd = @()
+  if ($processed.Tags) {
+    # Ensure we treat Tags as an array even when a single string was returned
+    $rawTags = @($processed.Tags)
+
+  # Trim and drop empty tokens. Wrap in @() so result is always an array even for one item.
+  $toAdd = @($rawTags | ForEach-Object { $_.ToString().Trim() } | Where-Object { $_ -ne '' })
+
+    if ($toAdd.Count -gt 0) {
+      $existing = @()
+      if ($existingTags) {
         # Azure DevOps uses semicolon-delimited tags; split on ';' and trim
         $existing = $existingTags -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' }
+      }
+
+      $merged = @($existing) + @($toAdd)
+      $merged = $merged | ForEach-Object { $_ } | Select-Object -Unique
+
+      $tagsString = ($merged -join '; ')
     }
-    $toAdd = $processed.Tags | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' }
+  }
 
-    $merged = @($existing) + @($toAdd)
-    $merged = $merged | ForEach-Object { $_ } | Select-Object -Unique
+  if (-not $titleChanged -and (-not $tagsString)) {
+    Write-Verbose "No bracketed tokens found and title unchanged for $id. Skipping."
+    continue
+  }
 
-    $tagsString = ($merged -join '; ')
+  if ($toAdd.Count -gt 0) { Write-Output "  New tags: $($toAdd -join ', ')" }
+  if ($tagsString) { Write-Output "  Resulting tags: $tagsString" }
+  Write-Output "  New title: $($processed.Title)"
 
-    Write-Output "  New tags: $($toAdd -join ', ')"
-    Write-Output "  Resulting tags: $tagsString"
-    Write-Output "  New title: $($processed.Title)"
-
-    Update-WorkItem -Id $id -NewTitle $processed.Title -TagsString $tagsString -OrganizationUrl $OrganizationUrl -Headers $headers -WhatIf:$WhatIf
+  Update-WorkItem -Id $id -NewTitle $processed.Title -TagsString $tagsString -OrganizationUrl $OrganizationUrl -Headers $headers -WhatIf:$WhatIf
 }
