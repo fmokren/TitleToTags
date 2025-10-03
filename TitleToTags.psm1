@@ -92,53 +92,80 @@ function Convert-TitleToTags {
         [string]$title
     )
 
-    # Bracket-aware parser that supports nested bracket groups. It extracts tokens
-    # from bracket pairs and removes bracketed substrings from the title. Tokens
-    # are returned in the order they appear (outer before inner).
+    # Only extract bracketed tokens if they appear as consecutive groups at the
+    # start of the title (ignoring leading whitespace). Nested brackets inside a
+    # leading group are supported; tokens are returned in outer->inner order for
+    # each group, and groups are returned left-to-right.
     $tokens = New-Object System.Collections.ArrayList
     $outChars = New-Object System.Text.StringBuilder
-    $stack = New-Object System.Collections.Stack
 
-    foreach ($ch in $title.ToCharArray()) {
-        switch ($ch) {
-            '[' {
-                # start a new buffer for content inside brackets
-                $stack.Push('')
-            }
-            ']' {
-                if ($stack.Count -gt 0) {
+    if ($null -eq $title) { $title = '' }
+    $s = [string]$title
+    $n = $s.Length
+    $i = 0
+
+    # Skip leading whitespace when deciding whether brackets are at the beginning
+    while ($i -lt $n -and [char]::IsWhiteSpace($s[$i])) { $i++ }
+
+    $parsedLeading = $false
+    if ($i -lt $n -and $s[$i] -eq '[') {
+        $parsedLeading = $true
+        while ($i -lt $n -and $s[$i] -eq '[') {
+            # Parse a single bracket group (supports nested brackets).
+            $groupTokens = New-Object System.Collections.ArrayList
+            $stack = New-Object System.Collections.Stack
+            $stack.Push('')
+            # advance past '['
+            $j = $i + 1
+            while ($j -lt $n -and $stack.Count -gt 0) {
+                $ch = $s[$j]
+                if ($ch -eq '[') {
+                    $stack.Push('')
+                    $j++
+                }
+                elseif ($ch -eq ']') {
                     $buf = $stack.Pop()
-                    $buf = $buf.Trim()
-                    if ($buf.Length -gt 0) { [void]$tokens.Add($buf) }
+                    if ($buf -ne $null) { $buf = $buf.ToString().Trim() }
+                    if ($buf -and $buf.Length -gt 0) { [void]$groupTokens.Add($buf) }
+                    $j++
                 }
                 else {
-                    # stray closing bracket -> treat literally
-                    [void]$outChars.Append($ch)
-                }
-            }
-            default {
-                if ($stack.Count -gt 0) {
-                    # append to top buffer
                     $top = $stack.Pop()
                     $top += $ch
                     $stack.Push($top)
-                }
-                else {
-                    [void]$outChars.Append($ch)
+                    $j++
                 }
             }
+
+            if ($stack.Count -gt 0) {
+                # Unclosed bracket found – treat entire title as literal (no extraction)
+                $parsedLeading = $false
+                break
+            }
+
+            # groupTokens were collected in closing order (inner-first); reverse to
+            # produce outer->inner order for this group
+            if ($groupTokens.Count -gt 1) { [array]::Reverse($groupTokens) }
+            foreach ($t in $groupTokens) { [void]$tokens.Add($t) }
+
+            # Advance i to the character after this group
+            $i = $j
+            # Skip any whitespace between adjacent leading groups
+            while ($i -lt $n -and [char]::IsWhiteSpace($s[$i])) { $i++ }
+            # Continue if next char is another '['; otherwise stop parsing leading groups
         }
     }
 
-    # If there are unclosed bracket buffers, treat them as literal text (prepend '[')
-    while ($stack.Count -gt 0) {
-        $buf = $stack.Pop()
-        if ($buf -ne $null) { [void]$outChars.Append('[' + $buf) }
+    if (-not $parsedLeading) {
+        # We did not parse leading bracket groups; output the original title intact
+        $outChars.Append($s) | Out-Null
     }
-
-    # Tokens were collected in the order of closing (inner-first). Reverse to prefer
-    # outer-to-inner order which is more natural for tags.
-    if ($tokens.Count -gt 1) { [array]::Reverse($tokens) }
+    else {
+        # Append the remainder of the string starting at current index
+        if ($i -lt $n) {
+            $outChars.Append($s.Substring($i)) | Out-Null
+        }
+    }
 
     # Normalize title by collapsing spaces and trimming
     $newTitle = ($outChars.ToString() -replace '\s{2,}', ' ').Trim().TrimStart(':').Trim()
@@ -153,7 +180,6 @@ function Convert-TitleToTags {
     $tagsArray = @()
     if ($tokens -and $tokens.Count -gt 0) {
         $tagsArray = $tokens | ForEach-Object { $_.ToString().Trim() } | Where-Object { $_ -ne '' }
-        # ensure a real array (not ArrayList) so callers can rely on @() wrapping behavior
         $tagsArray = @($tagsArray)
     }
 
