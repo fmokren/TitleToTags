@@ -141,7 +141,6 @@ foreach ($it in $items) {
     $title = $it.fields.'System.Title'
     $existingTags = $it.fields.'System.Tags'
 
-    Write-Output "Processing #$($id): $($title)"
     $processed = Convert-TitleToTags -title $title
 
     # Determine whether tags or title changed. Even if no tags were extracted, we may
@@ -177,13 +176,9 @@ foreach ($it in $items) {
         continue
     }
 
-    if ($toAdd.Count -gt 0) { Write-Output "  New tags: $($toAdd -join ', ')" }
-    if ($tagsString) { Write-Output "  Resulting tags: $tagsString" }
-    Write-Output "  New title: $($processed.Title)"
-
     # If prompting is enabled, show a concise diff and ask the user whether to apply the change.
     if ($Prompt -and -not $applyAll) {
-        Write-Output "\n=== Preview change for WorkItem $id ==="
+        Write-Output "`n=== Preview change for WorkItem $id ==="
         Show-ColoredDiff -Label 'Title' -Old $title -New $($processed.Title)
         # Normalize tags to simple strings for the diff helper
         if ($existingTags -is [System.Array]) { $existingTagsStr = ($existingTags -join '; ') } else { $existingTagsStr = [string]$existingTags }

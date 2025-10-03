@@ -9,13 +9,13 @@ USAGE
 #>
 
 param(
-    [Parameter(Mandatory=$true)] [string]$OrganizationUrl,
-    [Parameter(Mandatory=$true)] [string]$Project,
-    [Parameter(Mandatory=$false)] [string]$PatEnvVarName = 'ADO_PAT',
-    [Parameter(Mandatory=$false)] [string]$OutputFile = '.testdata/testdata.json',
-    [Parameter(Mandatory=$false)] [string]$SavedQueryName,
-    [Parameter(Mandatory=$false)] [string]$AreaPath = 'ADOTestProject',
-    [Parameter(Mandatory=$false)] [string]$IterationPath = 'ADOTestProject',
+    [Parameter(Mandatory = $true)] [string]$OrganizationUrl,
+    [Parameter(Mandatory = $true)] [string]$Project,
+    [Parameter(Mandatory = $false)] [string]$PatEnvVarName = 'ADO_PAT',
+    [Parameter(Mandatory = $false)] [string]$OutputFile = '.testdata/testdata.json',
+    [Parameter(Mandatory = $false)] [string]$SavedQueryName,
+    [Parameter(Mandatory = $false)] [string]$AreaPath = 'ADOTestProject',
+    [Parameter(Mandatory = $false)] [string]$IterationPath = 'ADOTestProject',
     [switch]$WhatIf
 )
 
@@ -82,10 +82,10 @@ for ($i = 1; $i -le $titlePatterns.Count; $i++) {
                 if ($null -ne $respObj.id) {
                     # Capture created id and associate with the pattern used
                     $entry = [PSCustomObject]@{
-                        Id = $respObj.id
-                        PatternIndex = $patternIndex
-                        PatternTitle = $titlePatterns[$patternIndex].Title
-                        ExpectedTags = $titlePatterns[$patternIndex].ExpectedTags
+                        Id            = $respObj.id
+                        PatternIndex  = $patternIndex
+                        PatternTitle  = $titlePatterns[$patternIndex].Title
+                        ExpectedTags  = $titlePatterns[$patternIndex].ExpectedTags
                         ExpectedTitle = $titlePatterns[$patternIndex].ExpectedTitle
                     }
                     $createdItems += $entry
@@ -149,112 +149,133 @@ $columns = @(
 $qBody = @{ name = $SavedQueryName; wiql = $wiql; isPublic = $true; columns = $columns } | ConvertTo-Json -Depth 4
 # Initialize queryId so we always have a defined value even if create/update fails
 $queryId = $null
-Write-Output "Creating saved query: $SavedQueryName"
-if ($WhatIf) { Write-Output "WhatIf: POST $queryUri with $qBody" }
-else {
-    try {
-        # Use Invoke-WebRequest so we can always access raw response content on failure
-        $webResp = Invoke-WebRequest -Method Post -Uri $queryUri -Headers $headers -Body $qBody -ContentType 'application/json' -ErrorAction Stop
-        $respContent = $webResp.Content
-        if ($webResp.StatusCode -ge 200 -and $webResp.StatusCode -lt 300) {
-            try {
-                $qresp = $respContent | ConvertFrom-Json -ErrorAction Stop
-                if ($null -ne $qresp.id) {
-                    $queryId = $qresp.id
-                    Write-Output "  Saved query id: $queryId"
+
+# First check if a query with this name already exists; if so, then get the query id and add to the metadata
+# so cleanup can delete it. If it exists, we will attempt to update it instead of creating a duplicate.
+try {
+    $listUri = "${OrganizationUrl}/${Project}/_apis/wit/queries/My%20Queries/${SavedQueryName}?`$depth=2&api-version=7.1-preview.2"
+    $searchResponse = Invoke-RestMethod -Method Get -Uri $listUri -Headers $headers -ErrorAction Stop
+
+    if ($searchResponse -and $searchResponse.id) 
+    {
+        $queryId = $searchResponse.id
+    }
+}
+catch {
+    Write-Warning "Failed to update existing saved query: $($_.Exception.Message)"
+    if ($_.Exception.Response) {
+        try { $body = $_.Exception.Response.Content.ReadAsStringAsync().GetAwaiter().GetResult(); Write-Warning "Response body: $body" } catch { }
+    }
+}
+    
+if ($null -eq $queryId) {
+    Write-Output "Creating saved query: $SavedQueryName"
+    if ($WhatIf) { Write-Output "WhatIf: POST $queryUri with $qBody" }
+    else {
+        try {
+            # Use Invoke-WebRequest so we can always access raw response content on failure
+            $webResp = Invoke-WebRequest -Method Post -Uri $queryUri -Headers $headers -Body $qBody -ContentType 'application/json' -ErrorAction Stop
+            $respContent = $webResp.Content
+            if ($webResp.StatusCode -ge 200 -and $webResp.StatusCode -lt 300) {
+                try {
+                    $qresp = $respContent | ConvertFrom-Json -ErrorAction Stop
+                    if ($null -ne $qresp.id) {
+                        $queryId = $qresp.id
+                        Write-Output "  Saved query id: $queryId"
+                    }
+                    else {
+                        Write-Warning "Saved query response JSON did not include 'id'. Response: $respContent"
+                        $queryId = $null
+                    }
                 }
-                else {
-                    Write-Warning "Saved query response JSON did not include 'id'. Response: $respContent"
+                catch {
+                    Write-Warning "Saved query created but response was not valid JSON: $($_.Exception.Message)"
+                    Write-Output "Response content:\n$respContent"
                     $queryId = $null
                 }
             }
-            catch {
-                Write-Warning "Saved query created but response was not valid JSON: $($_.Exception.Message)"
+            else {
+                Write-Warning "Saved query POST returned status $($webResp.StatusCode): $($webResp.StatusDescription)"
                 Write-Output "Response content:\n$respContent"
                 $queryId = $null
             }
         }
-        else {
-            Write-Warning "Saved query POST returned status $($webResp.StatusCode): $($webResp.StatusDescription)"
-            Write-Output "Response content:\n$respContent"
-            $queryId = $null
-        }
-    }
-    catch {
-        $errMsg = $_.Exception.Message
-        Write-Warning "Failed to create saved query: $errMsg"
-        # Try to read the response body if available
-        if ($_.Exception.Response) {
-            try {
-                $resp = $_.Exception.Response
-                if ($resp -and $resp.Content) {
-                    $body = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult()
-                    Write-Warning "Response body: $body"
-                }
-            }
-            catch {
-                Write-Warning "Failed to read exception response body: $_"
-            }
-        }
-
-        # If the error indicates a duplicate name, attempt to find the existing query and update it
-        if ($errMsg -match 'TF237018' -or $errMsg -match 'same name') {
-            Write-Output "Detected duplicate-name error; attempting to find existing saved query named '$SavedQueryName' and update it."
-            try {
-                $listUri = "${OrganizationUrl}/${Project}/_apis/wit/queries?`$depth=2&api-version=7.1-preview.2"
-                $listResp = Invoke-RestMethod -Method Get -Uri $listUri -Headers $headers -ErrorAction Stop
-
-                # Recursive search for node by name
-                function Find-QueryNode($node, $name) {
-                    if ($null -eq $node) { return $null }
-                    if ($node -is [System.Collections.IEnumerable]) {
-                        foreach ($n in $node) {
-                            $found = Find-QueryNode $n $name
-                            if ($found) { return $found }
-                        }
-                        return $null
-                    }
-                    else {
-                        if ($node.name -and $node.name -eq $name) { return $node }
-                        if ($node.children) { return Find-QueryNode $node.children $name }
-                        return $null
+        catch {
+            $errMsg = $_.Exception.Message
+            Write-Warning "Failed to create saved query: $errMsg"
+            # Try to read the response body if available
+            if ($_.Exception.Response) {
+                try {
+                    $resp = $_.Exception.Response
+                    if ($resp -and $resp.Content) {
+                        $body = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+                        Write-Warning "Response body: $body"
                     }
                 }
+                catch {
+                    Write-Warning "Failed to read exception response body: $_"
+                }
+            }
 
-                $existing = Find-QueryNode $listResp $SavedQueryName
-                if ($existing -and $existing.id) {
-                    $existingId = $existing.id
-                    Write-Output "Found existing query id: $existingId. Attempting to update its WIQL and columns."
+            # If the error indicates a duplicate name, attempt to find the existing query and update it
+            if ($errMsg -match 'TF237018' -or $errMsg -match 'same name') {
+                Write-Output "Detected duplicate-name error; attempting to find existing saved query named '$SavedQueryName' and update it."
+                try {
+                    $listUri = "${OrganizationUrl}/${Project}/_apis/wit/queries?`$depth=2&api-version=7.1-preview.2"
+                    $listResp = Invoke-RestMethod -Method Get -Uri $listUri -Headers $headers -ErrorAction Stop
 
-                    $updateUri = "${OrganizationUrl}/${Project}/_apis/wit/queries/$existingId?api-version=7.1-preview.2"
-                    $uBody = @{ id = $existingId; name = $SavedQueryName; wiql = $wiql; isPublic = $true; columns = $columns } | ConvertTo-Json -Depth 6
-                    try {
-                        $updateResp = Invoke-RestMethod -Method Patch -Uri $updateUri -Headers $headers -Body $uBody -ContentType 'application/json' -ErrorAction Stop
-                        if ($null -ne $updateResp.id) {
-                            $queryId = $updateResp.id
-                            Write-Output "  Updated saved query id: $queryId"
+                    # Recursive search for node by name
+                    function Find-QueryNode($node, $name) {
+                        if ($null -eq $node) { return $null }
+                        if ($node -is [System.Collections.IEnumerable]) {
+                            foreach ($n in $node) {
+                                $found = Find-QueryNode $n $name
+                                if ($found) { return $found }
+                            }
+                            return $null
                         }
                         else {
-                            Write-Warning "Update returned but no id found in response. Response: $($updateResp | ConvertTo-Json -Depth 6)"
+                            if ($node.name -and $node.name -eq $name) { return $node }
+                            if ($node.children) { return Find-QueryNode $node.children $name }
+                            return $null
                         }
                     }
-                    catch {
-                        Write-Warning "Failed to update existing saved query: $($_.Exception.Message)"
-                        if ($_.Exception.Response) {
-                            try { $body = $_.Exception.Response.Content.ReadAsStringAsync().GetAwaiter().GetResult(); Write-Warning "Response body: $body" } catch { }
-                        }
-                    }
-                }
-                else {
-                    Write-Warning "Could not locate existing saved query named '$SavedQueryName' to update."
-                }
-            }
-            catch {
-                Write-Warning "Failed to list or search saved queries: $($_.Exception.Message)"
-            }
-        }
 
-        $queryId = $queryId
+                    $existing = Find-QueryNode $listResp $SavedQueryName
+                    if ($existing -and $existing.id) {
+                        $existingId = $existing.id
+                        Write-Output "Found existing query id: $existingId. Attempting to update its WIQL and columns."
+
+                        $updateUri = "${OrganizationUrl}/${Project}/_apis/wit/queries/$existingId?api-version=7.1-preview.2"
+                        $uBody = @{ id = $existingId; name = $SavedQueryName; wiql = $wiql; isPublic = $true; columns = $columns } | ConvertTo-Json -Depth 6
+                        try {
+                            $updateResp = Invoke-RestMethod -Method Patch -Uri $updateUri -Headers $headers -Body $uBody -ContentType 'application/json' -ErrorAction Stop
+                            if ($null -ne $updateResp.id) {
+                                $queryId = $updateResp.id
+                                Write-Output "  Updated saved query id: $queryId"
+                            }
+                            else {
+                                Write-Warning "Update returned but no id found in response. Response: $($updateResp | ConvertTo-Json -Depth 6)"
+                            }
+                        }
+                        catch {
+                            Write-Warning "Failed to update existing saved query: $($_.Exception.Message)"
+                            if ($_.Exception.Response) {
+                                try { $body = $_.Exception.Response.Content.ReadAsStringAsync().GetAwaiter().GetResult(); Write-Warning "Response body: $body" } catch { }
+                            }
+                        }
+                    }
+                    else {
+                        Write-Warning "Could not locate existing saved query named '$SavedQueryName' to update."
+                    }
+                }
+                catch {
+                    Write-Warning "Failed to list or search saved queries: $($_.Exception.Message)"
+                }
+            }
+
+            $queryId = $queryId
+        }
     }
 }
 

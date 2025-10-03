@@ -12,7 +12,8 @@ param(
     [Parameter(Mandatory=$true)] [string]$Project,
     [Parameter(Mandatory=$false)] [string]$PatEnvVarName = 'TEST_PAT',
     [Parameter(Mandatory=$false)] [string]$MetadataFile = '.testdata/testdata.json',
-    [switch]$WhatIf
+    [switch]$WhatIf,
+    [switch]$KeepQuery
 )
 
 Set-StrictMode -Version Latest
@@ -29,7 +30,7 @@ $headers = Get-AuthHeader -pat $pat
 if (-not (Test-Path $MetadataFile)) { Write-Error "Metadata file not found: $MetadataFile"; exit 1 }
 $meta = Get-Content -Path $MetadataFile -Raw | ConvertFrom-Json
 
-if ($meta.SavedQueryId) {
+if ($meta.SavedQueryId -and -not $KeepQuery) {
     # Query ADO to confirm the saved query exists before attempting delete
 
 
