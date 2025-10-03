@@ -1,0 +1,65 @@
+{
+    // Example VS Code launch configuration for TitleToTags
+    // Copy this file to .vscode/launch.json and fill in your organization/project
+    // Do NOT commit your real .vscode/launch.json if it contains secrets.
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "PowerShell: TitleToTags.ps1 Fix Production (example)",
+            "type": "PowerShell",
+            "request": "launch",
+            "script": "${workspaceFolder}/TitleToTags.ps1",
+            "args": [
+                "-Prompt",
+                "-SavedQueryId", "<SAVED_QUERY_ID>",
+                "-OrganizationUrl", "https://dev.azure.com/<ORG>",
+                "-Project", "<PROJECT>"
+            ]
+        },
+        {
+            "name": "PowerShell: TitleToTags.ps1 Test Bugs (example)",
+            "type": "PowerShell",
+            "request": "launch",
+            "script": "${workspaceFolder}/TitleToTags.ps1",
+            "args": [
+                "-OrganizationUrl", "https://dev.azure.com/<ORG>",
+                "-Project", "<PROJECT>",
+                "-PatEnvVarName", "TEST_PAT",
+                "-Prompt",
+                "-Wiql", "Select [System.Id] From WorkItems Where [System.TeamProject] = '<PROJECT>' And [System.WorkItemType] = 'Bug' And [System.Tags] Contains 'TitleToTagsTest' Order By [System.Id]"
+            ]
+        },
+        {
+            "name": "PowerShell: Create Test Data (example)",
+            "type": "PowerShell",
+            "request": "launch",
+            "script": "${workspaceFolder}/create_testdata.ps1",
+            "args": [
+                "-OrganizationUrl", "https://dev.azure.com/<ORG>",
+                "-Project", "<PROJECT>",
+                "-PatEnvVarName", "TEST_PAT"
+            ]
+        },
+        {
+            "name": "PowerShell: Cleanup Test Data (example)",
+            "type": "PowerShell",
+            "request": "launch",
+            "script": "${workspaceFolder}/cleanup_testdata.ps1",
+            "args": [
+                "-OrganizationUrl", "https://dev.azure.com/<ORG>",
+                "-Project", "<PROJECT>",
+                "-KeepQuery"
+            ]
+        },
+        {
+            "name": "PowerShell: Run E2E Test (example)",
+            "type": "PowerShell",
+            "request": "launch",
+            "script": "${workspaceFolder}/e2e_test.ps1",
+            "args": [
+                "-OrganizationUrl", "https://dev.azure.com/<ORG>",
+                "-Project", "<PROJECT>"
+            ]
+        }
+    ]
+}
