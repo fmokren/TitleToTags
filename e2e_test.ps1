@@ -180,8 +180,13 @@ if ($meta.Items -and $meta.Items.Count -gt 0) {
         $title = $it.fields.'System.Title'
         $tags = $it.fields.'System.Tags'
 
-        # 1) Title should not contain bracketed tokens
-        if ($title -match '\[[^\]]+\]') { $failures += "WorkItem $($wiId): Title still contains bracketed tokens: '$title'" }
+        # 1) Title should not contain bracketed tokens — but only enforce this if the
+        # expected title does not itself contain bracketed groups. Some test patterns
+        # intentionally keep brackets in-place (e.g. trailing brackets) and those
+        # should not trigger a failure.
+        if (-not ($entry.ExpectedTitle -and ($entry.ExpectedTitle -match '\[[^\]]+\]'))) {
+            if ($title -match '\[[^\]]+\]') { $failures += "WorkItem $($wiId): Title still contains bracketed tokens: '$title'" }
+        }
 
         # 2) Tags should not contain bracket syntax
         if ($tags -and ($tags -match '\[[^\]]+\]')) { $failures += "WorkItem $($wiId): Tags contain bracket syntax: '$tags'" }

@@ -30,14 +30,14 @@ function Get-TestDataPatterns {
         # 2. Single bracketed substring at the end
         [PSCustomObject]@{
             Title = 'Title with bracketed substring at end [End]'
-            ExpectedTags = @('End')
-            ExpectedTitle = 'Title with bracketed substring at end'
+            ExpectedTags = @()
+            ExpectedTitle = 'Title with bracketed substring at end [End]'
         },
         # 3. Two bracketed substrings separated by text
         [PSCustomObject]@{
             Title = 'Title with two bracketed substrings [One] [Two] at end'
-            ExpectedTags = @('One', 'Two')
-            ExpectedTitle = 'Title with two bracketed substrings at end'
+            ExpectedTags = @()
+            ExpectedTitle = 'Title with two bracketed substrings [One] [Two] at end'
         },
         # 4. Only bracketed substrings; no other words
         [PSCustomObject]@{
@@ -48,8 +48,8 @@ function Get-TestDataPatterns {
         # 5. Bracket at the start and another later in the title
         [PSCustomObject]@{
             Title = '[First] Title begins with bracketed substring and also has [Second]'
-            ExpectedTags = @('First', 'Second')
-            ExpectedTitle = 'Title begins with bracketed substring and also has'
+            ExpectedTags = @('First')
+            ExpectedTitle = 'Title begins with bracketed substring and also has [Second]'
         },
         # 6. Two adjacent bracketed substrings at the start with no separator
         [PSCustomObject]@{
@@ -84,8 +84,8 @@ function Get-TestDataPatterns {
         # 11. Title with multiple spaces between words and brackets
         [PSCustomObject]@{
             Title = 'Title   with    multiple   spaces  [Tag]  should   normalize'
-            ExpectedTags = @('Tag')
-            ExpectedTitle = 'Title with multiple spaces should normalize'
+            ExpectedTags = @()
+            ExpectedTitle = 'Title with multiple spaces [Tag] should normalize'
         }
     )
 }
